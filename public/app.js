@@ -1,5 +1,26 @@
 const { useState, useEffect } = React;
 
+// Function to capture API calls
+const captureApiCall = (url, method, body) => {
+    if (window.CAPTURE_API_CALLS) {
+        console.log('API Call Captured:', { url, method, body });
+        // In a real implementation, you might want to store this data
+        // in localStorage or send it to a server for later use
+    }
+};
+
+// Wrapper for fetch that captures API calls and includes API key if available
+const captureFetch = (url, options = {}) => {
+    captureApiCall(url, options.method || 'GET', options.body);
+    const headers = options.headers || {};
+    const savedSettings = localStorage.getItem('appSettings');
+    const settings = savedSettings ? JSON.parse(savedSettings) : {};
+    if (settings.apiKey) {
+        headers['x-api-key'] = settings.apiKey;
+    }
+    return fetch(url, { ...options, headers });
+};
+
 function App() {
     const [llmType, setLlmType] = useState('openai');
     const [configuredLlmType, setConfiguredLlmType] = useState('');
@@ -10,7 +31,26 @@ function App() {
     const [customEndpoints, setCustomEndpoints] = useState([]);
     const [hasBaseConfig, setHasBaseConfig] = useState(false);
     const [newEndpoint, setNewEndpoint] = useState({ path: '', method: 'GET', model: '', prompt_template: '' });
-    const [showConfigForm, setShowConfigForm] = useState(true);
+    const [showConfigForm, setShowConfigForm] = useState(true); // Always show config form initially
+    const [captured, setCaptured] = useState(null)
+    const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+    const [settings, setSettings] = useState({ theme: 'light', notifications: true });
+
+    useEffect(() => {
+        const savedSettings = localStorage.getItem('appSettings');
+        if (savedSettings) {
+            setSettings(JSON.parse(savedSettings));
+        }
+    }, []);
+
+    const toggleSettingsModal = () => {
+        setIsSettingsModalOpen(!isSettingsModalOpen);
+    };
+
+    const updateSettings = (newSettings) => {
+        setSettings(newSettings);
+        localStorage.setItem('appSettings', JSON.stringify(newSettings));
+    };
 
     useEffect(() => {
         fetchBaseConfiguration();
@@ -19,18 +59,19 @@ function App() {
     useEffect(() => {
         if (hasBaseConfig) {
             fetchConfiguredEndpoints();
+            setShowConfigForm(false); // Hide config form if base config is valid
         }
     }, [hasBaseConfig]);
 
     useEffect(() => {
-        if (configuredLlmType) {
+        if (configuredLlmType) {            
             fetchModels(); // <-- Modified: Trigger fetchModels on llmType change
         }
     }, [llmType, configuredLlmType]);
 
     const fetchBaseConfiguration = async () => {
         try {
-            const response = await fetch('/api/base-configuration');
+            const response = await captureFetch('/api/base-configuration');
             if (response.ok) {
                 const data = await response.json();
                 setHasBaseConfig(data.valid);
@@ -48,7 +89,7 @@ function App() {
 
     const fetchModels = async () => {
         try {
-            const response = await fetch(`/api/models?llmType=${configuredLlmType}`);
+            const response = await captureFetch(`/api/models?llmType=${configuredLlmType}`);
             if (response.ok) {
                 const data = await response.json();
                 setModels(data);
@@ -63,7 +104,7 @@ function App() {
 
     const fetchConfiguredEndpoints = async () => {
         try {
-            const response = await fetch('/api/custom-endpoints');
+            const response = await captureFetch('/api/custom-endpoints');
             if (response.ok) {
                 const data = await response.json();
                 setCustomEndpoints(data);
@@ -78,7 +119,7 @@ function App() {
     const handleSaveConfig = async (event) => {
         event.preventDefault();
         try {
-            const response = await fetch('/api/configure-llm', {
+            const response = await captureFetch('/api/configure-llm', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ llmType, apiKey, model })
@@ -108,7 +149,7 @@ function App() {
                 return;
             }
 
-            const response = await fetch('/api/custom-endpoints', {
+            const response = await captureFetch('/api/custom-endpoints', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -134,38 +175,31 @@ function App() {
 
     return (
         <div className="container">
-            <h1>LLM Configuration</h1>
-            <button onClick={() => setShowConfigForm(!showConfigForm)}>
-                {showConfigForm ? 'Hide Configuration Form' : 'Show Configuration Form'}
-            </button>
+            <h1>LLM Configuration{hasBaseConfig} </h1>
+            <div className="row" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <button
+                    onClick={() => setShowConfigForm(!showConfigForm)}
+                    style={{ flex: 1, marginRight: '10px', width: '100%' }}
+                >
+                    {!showConfigForm ? 'Show Configuration Form' : 'Hide Configuration Form'}
+                </button>
+                <button
+                    onClick={() => toggleSettingsModal(true)}
+                    style={{ flex: 1, marginLeft: '10px', width: '100%' }}
+                >
+                    Open Settings
+                </button>
+            </div>
+
+
             {showConfigForm && (
                 <form onSubmit={handleSaveConfig}>
                     <div className="form-group">
-                        <label htmlFor="llmType">Select LLM</label>
-                        <select id="llmType" value={llmType} onChange={e => setLlmType(e.target.value)} required>
-                            <option value="openai">OpenAI</option>
-                            <option value="ollama">Ollama</option>
-                        </select>
+                        
                     </div>
-                    {llmType === 'openai' && (
-                        <div className="form-group">
-                            <label htmlFor="apiKey">API Key (for OpenAI)</label>
-                            <input
-                                type="text"
-                                id="apiKey"
-                                value={apiKey}
-                                onChange={e => setApiKey(e.target.value)}
-                                placeholder="Enter your OpenAI API key"
-                            />
-                        </div>
-                    )}
+                    
                     <div className="form-group">
-                        <label htmlFor="model">Select Model</label>
-                        <select id="model" value={model} onChange={e => setModel(e.target.value)} required>
-                            {models.map(m => (
-                                <option key={m.id} value={m.id}>{m.name}</option>
-                            ))}
-                        </select>
+                        
                     </div>
                     <button type="submit">Save Configuration</button>
                 </form>
@@ -175,9 +209,24 @@ function App() {
                     <h2>Custom Endpoints</h2>
                     <ul>
                         {customEndpoints.map(endpoint => (
-                            <li key={endpoint.path}>{`Path: ${endpoint.path}, Method: ${endpoint.method}, Model: ${endpoint.model}`}</li>
+                            <li key={endpoint.path} onClick={async () => {
+                                document.getElementById('responseBox').style.height = '200px';
+                                let captured = await captureFetch(endpoint.path);
+                                setCaptured(JSON.stringify(endpoint, null, 4));
+                            }}>
+                                {`Path: ${endpoint.path}, Method: ${endpoint.method}, Model: ${endpoint.model}`}
+                            </li>
                         ))}
                     </ul>
+                    <div className="form-group">
+                        <textarea
+                            id="responseBox"
+                            rows="1"
+                            style={{ width: '100%', padding: '10px', borderRadius: '4px', backgroundColor: '#3c3c3c', color: '#d4d4d4', height: '20px' }}
+                            readOnly
+                            value={captured}
+                        />
+                    </div>
                     <h3>Add New Endpoint</h3>
                     <form onSubmit={handleAddEndpoint}>
                         <div className="form-group">
@@ -229,7 +278,35 @@ function App() {
                         </div>
                         <button type="submit">Add Endpoint</button>
                     </form>
+                    <h3>Response</h3>
+                    <div className="form-group">
+                        <textarea
+                            id="responseBox"
+                            rows="10"
+                            style={{ width: '100%', padding: '10px', borderRadius: '4px', backgroundColor: '#3c3c3c', color: '#d4d4d4' }}
+                            readOnly
+                        />
+                    </div>
                 </>
+            )}
+            {isSettingsModalOpen && (
+                <div className="modal">
+                    <div className="modal-content">
+                        <span className="close" onClick={toggleSettingsModal}>&times;</span>
+                        <h2>Settings</h2>
+                        <div className="form-group">
+                            <label htmlFor="settingsApiKey">Server API Key</label>
+                            <input
+                                type="text"
+                                id="settingsApiKey"
+                                onChange={e => updateSettings({ ...settings, apiKey: e.target.value })}
+                                value={settings.apiKey || ''}
+                                placeholder="Enter your Server API key"
+                            />
+                        </div>
+                        <button onClick={toggleSettingsModal}>Save Settings</button>
+                    </div>
+                </div>
             )}
         </div>
     );

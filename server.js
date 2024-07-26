@@ -1,15 +1,16 @@
 const express = require('express');
 const path = require('path');
 const { Configuration, OpenAIApi } = require('openai');
-const Database = require('./database');
+const authMiddleware = require('./middleware/auth.js');
+const Database = require('./supabase.js');
 require('dotenv').config();
+
 
 // Initialize Express app
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.set('json spaces', 2);
-
 
 // Initialize the OpenAI client
 let openai;
@@ -22,7 +23,8 @@ function initializeOpenAI(apiKey) {
 
 // Initialize the MockDatabase
 const db = new Database();
-db.initialize();
+(async () => await db.initialize())();
+authMiddleware.initAuthMiddleware(db);
 
 // In-memory storage for custom endpoints
 const customEndpoints = {};
@@ -88,7 +90,7 @@ async function performInference(prompt, modelOverride = false) {
     }
 }
 
-app.post('/api/generate', async (req, res) => {
+app.post('/api/generate', authMiddleware.highSecurityMiddleware, async (req, res) => {
     const { prompt } = req.body;
     try {
         const result = await performInference(prompt);
@@ -97,8 +99,6 @@ app.post('/api/generate', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
-
 
 async function fetchOllamaModels() {
     try {
@@ -132,7 +132,7 @@ app.get('/api/base-configuration', async (req, res) => {
 
 
 // Endpoint to configure LLM settings
-app.post('/api/configure-llm', async (req, res) => {
+app.post('/api/configure-llm', authMiddleware.highSecurityMiddleware, async (req, res) => {
     const { llmType, apiKey, model } = req.body;
 
     try {
@@ -182,7 +182,7 @@ app.get('/api/logs/:model', async (req, res) => {
 });
 
 // Endpoint to configure custom endpoints
-app.post('/api/custom-endpoints', async (req, res) => {
+app.post('/api/custom-endpoints', authMiddleware.highSecurityMiddleware, async (req, res) => {
     const { path, method, model, prompt_template } = req.body;
 
     if (!path || !method || !model || !prompt_template) {
@@ -212,7 +212,7 @@ app.get('/api/custom-endpoints', async (req, res) => {
 });
 
 // Wildcard route to handle custom endpoints
-app.all('*', async (req, res) => {
+app.all('*', authMiddleware.configuredMiddleware, async (req, res) => {
     const { path } = req;
 
     try {
@@ -229,7 +229,7 @@ app.all('*', async (req, res) => {
                 try {
                     res.json(JSON.parse(inference.result));
                 } catch (error) {
-                    res.json({"inference":inference});
+                    res.send(inference);
                 }
             } else {
                 res.status(405).json({ error: 'Method Not Allowed' });
